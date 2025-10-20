@@ -1,0 +1,35 @@
+# GRPO Test Prompts - Comprehensive Quality Assessment
+# Use these prompts to test GRPO vs baseline generation quality
+
+# Motion Quality Tests (5 prompts)
+A ball rolling smoothly down a gentle wooden slope
+A rope swinging like a pendulum with consistent rhythm  
+Water flowing steadily from a faucet into a sink below
+A coin spinning rapidly on a table before falling over
+Autumn leaves falling from a tree, swaying gently in the breeze
+
+# Object Interaction Tests (4 prompts)
+A hand pushing a wooden block, which slides across a table
+A hammer striking a nail, driving it into a wooden board
+Dominoes falling in sequence, each triggering the next
+Scissors cutting through a piece of paper in a straight line
+
+# Fine Detail Tests (3 prompts)
+Rain drops hitting a window pane, individual droplets clearly visible
+A hummingbird hovering near a flower, wings beating rapidly
+Spider web covered in morning dew, each droplet distinct
+
+# Multi-Object Tests (3 prompts)
+Three colorful balloons floating upward at different speeds
+Five birds flying together in V-formation across the sky
+Two people tossing a red ball back and forth between them
+
+# Lighting and Weather Tests (3 prompts)
+Sunset gradually darkening, colors shifting from orange to deep purple
+A candle flame flickering, casting dancing shadows on the nearby wall
+Morning fog slowly clearing to reveal a mountain landscape
+
+# Action Completion Tests (2 prompts)
+A wooden door opening smoothly from closed to wide open
+An ice cube melting slowly into a puddle of clear water
+

@@ -19,8 +19,6 @@ python inference.py \
     --width 512 \
     --num_frames 300 \
     --seed 2 \
-    --guidance_scale 8.0 \
-    --num_inference_steps 40
 
 echo "Done! Compare this with the basic prompt version."
 

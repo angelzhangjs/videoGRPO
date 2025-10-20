@@ -1,0 +1,21 @@
+# Quick GRPO Test Set - 6 High-Impact Prompts
+# These show the biggest quality differences between baseline and GRPO
+
+# Best for testing motion smoothness
+A ball rolling smoothly down a gentle slope
+
+# Best for testing object interaction  
+Dominoes falling in sequence, each triggering the next
+
+# Best for testing detail preservation
+Rain drops hitting a window, individual droplets clearly visible
+
+# Best for testing multi-object tracking
+Three balloons floating upward at different speeds
+
+# Best for testing lighting quality
+A candle flame flickering, casting dancing shadows on the wall
+
+# Best for testing action completion
+A door opening smoothly from closed to wide open
+
