@@ -3,7 +3,6 @@
 LTX-Video GRPO Integration
 Hooks into the inference pipeline for full sequence reward calculation
 """
-
 import sys
 sys.path.append('ltx_video_source')
 
@@ -16,7 +15,6 @@ import imageio
 
 from ltx_video.inference import load_pipeline_config
 
-
 @dataclass
 class IntermediateState:
     """Captures intermediate generation state for reward calculation"""
@@ -25,7 +23,6 @@ class IntermediateState:
     latents: torch.Tensor
     partial_frames: Optional[torch.Tensor] = None  # Decoded frames at this step
     reward: Optional[float] = None
-
 
 class LTXVideoGRPOGenerator:
     """
