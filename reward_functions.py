@@ -235,7 +235,6 @@ class VideoRewardModel(nn.Module):
             quality_score = self.quality_predictor(video_features)
             return quality_score.squeeze()
 
-
 class VLMRewardTrainer:
     """
     Trainer that uses VLM (Gemini) as teacher to train reward model
@@ -360,7 +359,6 @@ class VLMRewardTrainer:
                 'loss': avg_loss,
             })
 
-        
     def _get_vlm_score(self, video: torch.Tensor) -> float:
         """
         Get VLM evaluation score (ground truth)
@@ -387,7 +385,6 @@ class VLMRewardTrainer:
         self.reward_model.load_state_dict(checkpoint['model_state_dict'])
         self.training_history = checkpoint.get('training_history', [])
         print(f"✅ Model loaded from {path}")
-
 
 # ============================================================================
 # FROZEN REWARD MODEL FOR GRPO (No backprop when evaluating)
@@ -427,67 +424,6 @@ def evaluate_with_learned_reward(
     
     return float(reward_score)
 
-
-# ============================================================================
-# SIMPLE HAND-CRAFTED REWARDS (No training needed)
-# ============================================================================
-
-@torch.no_grad()
-def temporal_consistency_reward(video: torch.Tensor, prompt: str = None) -> float:
-    """
-    Universal reward: Frame-to-frame smoothness
-    No training needed, works for all videos
-    """
-    if len(video.shape) == 5:
-        video = video[0]  # Remove batch dim: [C, T, H, W]
-    
-    T = video.shape[1]
-    diffs = []
-    
-    for t in range(T - 1):
-        diff = torch.abs(video[:, t+1] - video[:, t]).mean()
-        diffs.append(diff.item())
-    
-    consistency = 1.0 / (1.0 + np.mean(diffs))
-    return float(consistency)
-
-
-@torch.no_grad()
-def video_quality_reward(video: torch.Tensor, prompt: str = None) -> float:
-    """
-    Universal reward: Visual quality via variance
-    No training needed
-    """
-    variance = video.var().item()
-    # Normalize to reasonable range
-    quality = np.clip(variance / 0.1, 0, 1)
-    return float(quality)
-
-
-@torch.no_grad()
-def motion_diversity_reward(video: torch.Tensor, prompt: str = None) -> float:
-    """
-    Universal reward: Motion presence and diversity
-    No training needed
-    """
-    if len(video.shape) == 5:
-        video = video[0]
-    
-    T = video.shape[1]
-    frame_diffs = []
-    
-    for t in range(T - 1):
-        diff = torch.abs(video[:, t+1] - video[:, t]).mean().item()
-        frame_diffs.append(diff)
-    
-    # High std = dynamic motion
-    motion_score = np.std(frame_diffs)
-    return float(np.clip(motion_score * 10, 0, 1))
-
-
-# ============================================================================
-# PHYSICS-AWARE REWARDS (Motion and Dynamics)
-# ============================================================================
 
 @torch.no_grad()
 def physics_velocity_reward(video: torch.Tensor, prompt: str = None) -> float:
@@ -722,18 +658,6 @@ def combined_physics_reward(video: torch.Tensor, prompt: str = None) -> float:
     return float(total)
 
 
-@torch.no_grad()
-def combined_hand_crafted_reward(video: torch.Tensor, prompt: str = None) -> float:
-    """
-    Combine multiple hand-crafted rewards
-    No training needed, fast evaluation
-    """
-    quality = video_quality_reward(video)
-    consistency = temporal_consistency_reward(video)
-    motion = motion_diversity_reward(video)
-    
-    total = 0.3 * quality + 0.5 * consistency + 0.2 * motion
-    return float(total)
 
 
 # ============================================================================

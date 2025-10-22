@@ -11,6 +11,7 @@ import io
 from PIL import Image
 import json
 import time
+import os
 from dataclasses import dataclass
 
 try:
@@ -35,14 +36,80 @@ class GeminiVLMVerifier:
     Gemini Vision-Language Model as intelligent verifier for video quality and reasoning
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-pro-vision-latest"):
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
         if not GEMINI_AVAILABLE:
             raise ImportError("Google Generative AI not available")
         
         genai.configure(api_key=api_key)
+        self.model_name = model_name
         self.model = genai.GenerativeModel(model_name)
         self.verification_history = []
         
+        print(f"✓ GeminiVLMVerifier initialized with model: {model_name}")
+        
+    def score_video_simple(
+        self,
+        video_frames: torch.Tensor,
+        prompt: str,
+        device: str = 'cuda'
+    ) -> float:
+        """
+        Simple video scoring - returns single score 0-10.
+        
+        Easier to use than full verification.
+        
+        Args:
+            video_frames: Video tensor [C, T, H, W] or [B, C, T, H, W]
+            prompt: Text description of video
+            device: Device
+        
+        Returns:
+            Score from 0-10
+        """
+        print(f"\n🔍 Scoring video with Gemini...")
+        print(f"   Prompt: '{prompt}'")
+        
+        # Convert frames
+        frame_images = self._prepare_frames_for_gemini(video_frames)
+        print(f"   Prepared {len(frame_images)} frames")
+        
+        # Simple scoring prompt
+        scoring_prompt = f"""
+        Analyze this video sequence and rate it on a scale of 0-10.
+        
+        Video description: "{prompt}"
+        
+        Rate based on:
+        - Does the video match the description?
+        - Is the motion realistic and smooth?
+        - Is there clear temporal progression?
+        - Does it show good physics/dynamics?
+        
+        Respond with ONLY a number from 0-10.
+        """
+        
+        try:
+            # Query Gemini
+            content = [scoring_prompt] + frame_images
+            response = self.model.generate_content(content)
+            
+            # Extract score
+            score_text = response.text.strip()
+            # Try to parse number
+            import re
+            numbers = re.findall(r'\d+\.?\d*', score_text)
+            if numbers:
+                score = float(numbers[0])
+                print(f"   ✓ Gemini score: {score}/10")
+                return min(max(score, 0), 10)  # Clamp to [0, 10]
+            else:
+                print(f"   ⚠️ Could not parse score from: {score_text}")
+                return 5.0
+                
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+            return 0.0
+    
     def verify_video_reasoning(
         self,
         video_frames: torch.Tensor,
@@ -55,8 +122,13 @@ class GeminiVLMVerifier:
         """
         start_time = time.time()
         
+        print(f"\n🔍 Gemini VLM Verification")
+        print(f"   Model: {self.model_name}")
+        print(f"   Reasoning focus: {reasoning_focus}")
+        
         # Convert video frames to format Gemini can process
         frame_images = self._prepare_frames_for_gemini(video_frames)
+        print(f"   Prepared {len(frame_images)} frames for Gemini")
         
         # Create comprehensive verification prompt
         verification_prompt = self._create_verification_prompt(
@@ -82,7 +154,7 @@ class GeminiVLMVerifier:
         
         return verification_result
     
-    def _prepare_frames_for_gemini(self, video_frames: torch.Tensor, max_frames: int = 8) -> List[Image.Image]:
+    def _prepare_frames_for_gemini(self, video_frames: torch.Tensor, max_frames: int = 4) -> List[Image.Image]:
         """
         Convert video tensor to PIL Images for Gemini processing
         """
@@ -194,11 +266,15 @@ Please provide your response in this JSON format:
                 content.append(image)
             
             # Query Gemini
+            print(f"Querying Gemini with {len(frame_images)} frames...")
             response = self.model.generate_content(content)
+            print("✓ Gemini responded successfully")
             return response.text
             
         except Exception as e:
-            print(f"Error querying Gemini: {e}")
+            print(f"❌ Error querying Gemini: {type(e).__name__}: {e}")
+            print(f"   Model: {self.model._model_name if hasattr(self.model, '_model_name') else 'unknown'}")
+            print(f"   Trying fallback...")
             return self._fallback_analysis()
     
     def _parse_gemini_response(
@@ -656,6 +732,114 @@ def example_self_improving_grpo():
     """)
 
 if __name__ == "__main__":
-    example_self_improving_grpo()
+    import imageio
+    
+    GEMINI_API_KEY = "AIzaSyCeZPolffTxxQQDVKbrb3U7M1MM-oLo_YU"
+    
+    print("="*70)
+    print("🎬 Gemini VLM Video Scoring Test")
+    print("="*70)
+    
+    # First, list available models
+    print("\n📋 Checking available Gemini models...")
+    genai.configure(api_key=GEMINI_API_KEY)
+    
+    vision_models = []
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            print(f"   - {m.name}")
+            # Check if it supports vision
+            if 'vision' in m.name.lower() or 'pro' in m.name.lower() or 'flash' in m.name.lower():
+                vision_models.append(m.name.replace('models/', ''))
+    
+    if not vision_models:
+        print("\n❌ No suitable vision models found!")
+        print("Available text-only models will be used for text-based evaluation only.")
+        exit(1)
+    
+    # Use first available vision-capable model
+    model_to_use = vision_models[0]
+    print(f"\n✓ Will use model: {model_to_use}")
+    
+    # Load actual video file
+    video_path = "outputs/physics_outputs/prompt_004/video_output_0_a-ball-bouncing-down-a-staircase_2025_320x512x160_0.mp4"
+    
+    print(f"\n📹 Loading video: {video_path}")
+    
+    # Check if file exists
+    if not os.path.exists(video_path):
+        print(f"❌ Video file not found: {video_path}")
+        exit(1)
+    
+    # Read video
+    reader = imageio.get_reader(video_path)
+    frames = []
+    for frame in reader:
+        frames.append(frame)
+    reader.close()
+    
+    print(f"   ✓ Loaded {len(frames)} frames")
+    
+    # Convert to tensor [C, T, H, W]
+    frames_array = np.array(frames)  # [T, H, W, C]
+    frames_tensor = torch.from_numpy(frames_array).permute(3, 0, 1, 2).float()  # [C, T, H, W]
+    
+    # Normalize to [0, 1] range (Gemini expects normal images)
+    frames_tensor = frames_tensor / 255.0
+    
+    print(f"   ✓ Video tensor shape: {frames_tensor.shape}")
+    
+    # Create verifier with discovered model
+    print(f"\n🤖 Initializing Gemini VLM with {model_to_use}...")
+    verifier = GeminiVLMVerifier(api_key=GEMINI_API_KEY, model_name=model_to_use)
+    
+    # Test 1: Simple scoring (easier, more robust)
+    print("\n" + "="*70)
+    print("Test 1: Simple Video Scoring")
+    print("="*70)
+    
+    score = verifier.score_video_simple(
+        video_frames=frames_tensor,
+        prompt="A ball bouncing down a staircase"
+    )
+    
+    print(f"\n📊 Simple Score: {score}/10")
+    
+    # Test 2: Detailed reasoning verification (more comprehensive)
+    print("\n" + "="*70)
+    print("Test 2: Detailed Reasoning Verification")
+    print("="*70)
+    
+    result = verifier.verify_video_reasoning(
+        video_frames=frames_tensor,
+        prompt="A ball bouncing down a staircase",
+        reasoning_focus=['causal', 'temporal', 'scientific', 'logical'],
+        complexity_level=3
+    )
+    
+    print("\n" + "="*70)
+    print("📊 Detailed Verification Results")
+    print("="*70)
+    print(f"Overall Score: {result.overall_score:.2f}/10")
+    print(f"Confidence: {result.confidence:.2f}")
+    print(f"Verification Time: {result.verification_time:.2f}s")
+    
+    if result.reasoning_analysis:
+        print(f"\n🧠 Reasoning Analysis:")
+        for reasoning_type, score in result.reasoning_analysis.items():
+            print(f"  {reasoning_type}: {score:.2f}/10")
+    
+    if result.improvement_suggestions:
+        print(f"\n💡 Improvement Suggestions:")
+        for i, suggestion in enumerate(result.improvement_suggestions[:3], 1):
+            print(f"  {i}. {suggestion}")
+    
+    print(f"\n📝 Detailed Feedback:")
+    feedback = result.detailed_feedback[:300] + "..." if len(result.detailed_feedback) > 300 else result.detailed_feedback
+    print(feedback)
+    
+    print("\n" + "="*70)
+    print("✅ Gemini VLM evaluation complete!")
+    print("="*70)
 
 

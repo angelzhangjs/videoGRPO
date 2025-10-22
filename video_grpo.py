@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 # Import hand-crafted reward functions
-try:
-    from reward_functions import (
+
+from reward_functions import (
         combined_physics_reward,
         physics_velocity_reward,
         physics_acceleration_reward,
@@ -22,13 +22,6 @@ try:
         temporal_consistency_reward,
         video_quality_reward,
     )
-    REWARDS_AVAILABLE = True
-except ImportError:
-    print("⚠️ Warning: reward_functions.py not found. Define reward functions manually.")
-    REWARDS_AVAILABLE = False
-    # Dummy fallback
-    def combined_physics_reward(video, prompt=None):
-        return video.var().item()
 
 global CHANNEL_SIZE 
 CHANNEL_SIZE = 8  # LTX-Video uses 8 latent channels
@@ -237,11 +230,7 @@ def evaluate_episodes_with_physics_rewards(
         >>> best = max(episodes, key=lambda ep: ep.reward)
     """
     print(f"\n📊 Evaluating {len(episodes)} episodes with '{reward_type}' reward...")
-    
-    # Import check
-    if not REWARDS_AVAILABLE and reward_type != 'custom':
-        print("⚠️ Using fallback variance-based reward (reward_functions.py not available)")
-    
+   
     # Evaluate each episode
     for i, episode in enumerate(episodes):
         # Select reward function
@@ -264,7 +253,6 @@ def evaluate_episodes_with_physics_rewards(
         elif reward_type == 'custom' and custom_reward_fn is not None:
             reward = custom_reward_fn(episode.video, episode.prompt)
         else:
-            # Default fallback
             reward = combined_physics_reward(episode.video, episode.prompt)
         
         # Store reward
@@ -277,7 +265,7 @@ def evaluate_episodes_with_physics_rewards(
     
     # Summary
     all_rewards = [ep.reward for ep in episodes]
-    print(f"\n✅ Evaluation complete!")
+    print("\n✅ Evaluation complete!")
     print(f"  Reward range: [{min(all_rewards):.3f}, {max(all_rewards):.3f}]")
     print(f"  Mean: {np.mean(all_rewards):.3f}, Std: {np.std(all_rewards):.3f}\n")
     
@@ -308,9 +296,6 @@ def normalize_rewards_per_group(candidates: List[videoepisode]) -> List[videoepi
         group_rewards = [episode.reward for episode in group]
         mean_reward = np.mean(group_rewards)
         std_reward = np.std(group_rewards)
-        
-        print(f"Group '{prompt[:40]}...': mean={mean_reward:.3f}, std={std_reward:.3f}")
-        
         for episode in group:
             # Compute advantage
             advantage = (episode.reward - mean_reward) / (std_reward + 1e-4)
@@ -748,13 +733,13 @@ def update_policy_for_latent_trajectories(
     new_latent_a = trajectory_center - spread * trajectory_direction
     new_latent_b = trajectory_center + spread * trajectory_direction
     
-    print(f"   ✓ Gradient magnitude: {gradient_norm.item():.6f}")
-    print(f"   ✓ Moved anchors toward better latent region")
+    print("   ✓ Gradient magnitude: {gradient_norm.item():.6f}")
+    print("   ✓ Moved anchors toward better latent region")
     
     # ============================================================
     # COMPONENT 2: Update TEMPORAL STRUCTURE (Smoothness)
     # ============================================================
-    print(f"\n2️⃣ Improving TEMPORAL smoothness...")
+    print("\n2️⃣ Improving TEMPORAL smoothness...")
     
     # Apply temporal smoothing to reduce jitter
     new_latent_a = improve_temporal_smoothness(
@@ -766,18 +751,18 @@ def update_policy_for_latent_trajectories(
         smoothness_weight=0.3
     )
     
-    print(f"   ✓ Applied temporal smoothing (weight=0.3)")
-    print(f"   ✓ Reduced frame-to-frame jitter in anchors")
+    print("   ✓ Applied temporal smoothing (weight=0.3)")
+    print("   ✓ Reduced frame-to-frame jitter in anchors")
     
     # ============================================================
     # COMPONENT 3: Learn from BEST PATTERNS
     # ============================================================
-    print(f"\n3️⃣ Learning from best candidate's temporal pattern...")
+    print("\n3️⃣ Learning from best candidate's temporal pattern...")
     
     # Extract temporal pattern from best trajectory
     best_temporal_pattern = extract_temporal_pattern(best_latent_trajectory)
     
-    print(f"   Pattern: {[f'{p:.2f}' for p in best_temporal_pattern.cpu().numpy()[:8]]}... (first 8 frames)")
+    print("   Pattern: {[f'{p:.2f}' for p in best_temporal_pattern.cpu().numpy()[:8]]}... (first 8 frames)")
     
     # Apply learned pattern to new anchors
     new_latent_a = apply_temporal_pattern(
@@ -791,13 +776,13 @@ def update_policy_for_latent_trajectories(
         pattern_strength=0.5
     )
     
-    print(f"   ✓ Applied successful temporal pattern (strength=0.5)")
-    print(f"   ✓ New anchors inherit best dynamics")
+    print("   ✓ Applied successful temporal pattern (strength=0.5)")
+    print("   ✓ New anchors inherit best dynamics")
     
     # ============================================================
     # COMPONENT 4: Apply PHYSICS PRIORS
     # ============================================================
-    print(f"\n4️⃣ Applying physics priors...")
+    print("\n4️⃣ Applying physics priors...")
     
     # Infer physics type from prompt
     physics_type = 'constant'  # Default
@@ -805,15 +790,15 @@ def update_policy_for_latent_trajectories(
         prompt_lower = prompt.lower()
         if any(word in prompt_lower for word in ['fall', 'drop', 'bounce', 'gravity']):
             physics_type = 'acceleration'
-            print(f"   Detected: Gravity/falling motion")
+            print("   Detected: Gravity/falling motion")
         elif any(word in prompt_lower for word in ['slow', 'stop', 'friction', 'roll']):
             physics_type = 'deceleration'
-            print(f"   Detected: Deceleration motion")
+            print("   Detected: Deceleration motion")
         elif any(word in prompt_lower for word in ['swing', 'pendulum', 'oscillate', 'wave']):
             physics_type = 'oscillation'
-            print(f"   Detected: Oscillatory motion")
+            print("   Detected: Oscillatory motion")
         else:
-            print(f"   Using: Constant velocity prior")
+            print("   Using: Constant velocity prior")
     
     # Apply physics-informed temporal structure
     new_latent_a = apply_physics_prior(
@@ -826,23 +811,7 @@ def update_policy_for_latent_trajectories(
         physics_type=physics_type,
         strength=0.3
     )
-    
-    print(f"   ✓ Applied {physics_type} physics prior (strength=0.3)")
-    print(f"   ✓ Temporal structure now physics-informed")
-    
-    # ============================================================
-    # SUMMARY
-    # ============================================================
-    print(f"\n{'='*70}")
-    print(f"✅ Trajectory Improvement Complete")
-    print(f"{'='*70}")
-    print(f"New anchors have:")
-    print(f"  ✓ Better spatial positions (gradient ascent)")
-    print(f"  ✓ Smoother temporal structure (jitter reduction)")
-    print(f"  ✓ Learned temporal patterns (from best candidate)")
-    print(f"  ✓ Physics-informed dynamics ({physics_type} pattern)")
-    print(f"\nNext round will generate videos from this improved trajectory family")
-    print(f"Expected: Better motion quality and physics realism\n")
+
     
     return new_latent_a, new_latent_b
 

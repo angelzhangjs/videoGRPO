@@ -4,6 +4,10 @@ import numpy as np
 from typing import Dict
 from torchvision.transforms.functional import resize
 
+# Try to import CLIP
+
+import clip
+  
 # Global model cache (lazy loading)
 global dino_model, clip_model, clip_preprocess
 dino_model = None
@@ -74,79 +78,6 @@ def load_clip_model(device='cuda'):
 # ============================================================================
 
 @torch.no_grad()
-def dino_subject_consistency_reward(video: torch.Tensor, prompt: str = None, device='cuda') -> float:
-    """
-    Object tracking consistency using DINO.
-    
-    Measures how consistently the main subject appears across frames.
-    High score = object maintains identity throughout video.
-    
-    Args:
-        video: Video tensor [B, C, T, H, W] or [C, T, H, W]
-        prompt: Text prompt (optional, not used)
-        device: Device
-    
-    Returns:
-        Consistency score (0-1), higher = better object tracking
-    """
-    # Load DINO
-    dino = load_dino_model(device)
-    
-    # Handle batch dimension
-    if len(video.shape) == 5:
-        video = video[0]  # [C, T, H, W]
-    
-    C, T, H, W = video.shape
-    
-    # Sample frames (use every 4th frame to save computation)
-    frame_indices = list(range(0, T, max(1, T // 8)))  # Sample ~8 frames
-    
-    # Transform frames for DINO
-    dino_frames = []
-    for t in frame_indices:
-        frame = video[:, t, :, :]  # [C, H, W]
-        # Denormalize from [-1, 1] to [0, 1] if needed
-        if frame.min() < 0:
-            frame = (frame + 1) / 2
-        transformed = dino_transform_image_gpu(frame, 224, device)
-        dino_frames.append(transformed)
-    
-    # Extract DINO features
-    features_list = []
-    for frame in dino_frames:
-        frame_batch = frame.unsqueeze(0)  # [1, C, H, W]
-        features = dino(frame_batch)
-        features = F.normalize(features, dim=-1, p=2)
-        features_list.append(features)
-    
-    # Compute consistency across frames
-    # Anchor: first frame
-    anchor_features = features_list[0]
-    
-    # Compare all frames to anchor and to neighbors
-    similarities = []
-    for i in range(1, len(features_list)):
-        # Similarity to anchor (first frame)
-        sim_to_anchor = F.cosine_similarity(
-            anchor_features, features_list[i], dim=-1
-        ).item()
-        
-        # Similarity to previous frame
-        sim_to_prev = F.cosine_similarity(
-            features_list[i-1], features_list[i], dim=-1
-        ).item()
-        
-        # Average similarity
-        avg_sim = (0.4 * max(0, sim_to_anchor) + 0.6 * max(0, sim_to_prev))
-        similarities.append(avg_sim)
-    
-    # Overall consistency
-    consistency_score = np.mean(similarities) if similarities else 0.5
-    
-    return float(consistency_score)
-
-
-@torch.no_grad()
 def dino_object_presence_reward(video: torch.Tensor, prompt: str = None, device='cuda') -> float:
     """
     Object presence and saliency using DINO.
@@ -193,7 +124,6 @@ def dino_object_presence_reward(video: torch.Tensor, prompt: str = None, device=
     
     return float(presence_score)
 
-
 # ============================================================================
 # CLIP-BASED REWARDS (Text-Video Alignment)
 # ============================================================================
@@ -231,7 +161,6 @@ def clip_text_alignment_reward(video: torch.Tensor, prompt: str, device='cuda') 
     frame_indices = torch.linspace(0, T-1, num_frames_to_sample).long()
     
     # Encode text
-    import clip
     text_tokens = clip.tokenize([prompt]).to(device)
     text_features = clip_model.encode_text(text_tokens)
     text_features = F.normalize(text_features, dim=-1)
@@ -296,7 +225,6 @@ def clip_temporal_alignment_reward(video: torch.Tensor, prompt: str, device='cud
     C, T, H, W = video.shape
     
     # Create temporal prompts
-    import clip
     temporal_prompts = [
         f"beginning of {prompt}",
         f"middle of {prompt}",
@@ -480,29 +408,9 @@ def dino_subject_consistency_reward(video: torch.Tensor, prompt: str = None, dev
     
     return float(sim_per_frame)
 
-
 # ============================================================================
 # SIMPLE HAND-CRAFTED REWARDS (No training needed)
 # ============================================================================
-@torch.no_grad()
-def temporal_consistency_reward(video: torch.Tensor) -> float:
-    """
-    Universal reward: Frame-to-frame smoothness
-    No training needed, works for all videos
-    """
-    if len(video.shape) == 5:
-        video = video[0]  # Remove batch dim: [C, T, H, W]
-    
-    T = video.shape[1]
-    diffs = []
-    
-    for t in range(T - 1):
-        diff = torch.abs(video[:, t+1] - video[:, t]).mean()
-        diffs.append(diff.item())
-    
-    consistency = 1.0 / (1.0 + np.mean(diffs))
-    return float(consistency)
-
 
 @torch.no_grad()
 def video_quality_reward(video: torch.Tensor, prompt: str = None) -> float:
@@ -771,17 +679,53 @@ def combined_physics_reward(video: torch.Tensor, prompt: str = None) -> float:
     
     return float(total)
 
+
 @torch.no_grad()
-def combined_hand_crafted_reward(video: torch.Tensor, prompt: str = None) -> float:
+def combined_hand_crafted_reward(video: torch.Tensor, prompt: str = None, device: str = 'cuda') -> float:
     """
-    Combine multiple hand-crafted rewards
-    No training needed, fast evaluation
-    """
-    quality = video_quality_reward(video)
-    consistency = temporal_consistency_reward(video)
-    motion = motion_diversity_reward(video)
+    Combined reward using CLIP, DINO, video quality, and motion dynamics.
     
-    total = 0.3 * quality + 0.5 * consistency + 0.2 * motion
+    Integrates:
+      - CLIP text alignment (if prompt available)
+      - DINO object tracking
+      - Visual quality metrics
+      - Motion dynamics
+    
+    Args:
+        video: Video tensor
+        prompt: Text prompt (optional)
+        device: Device
+    
+    Returns:
+        Combined reward score (0-1)
+    """
+    # Quality and motion (always computed)
+    quality = video_quality_reward(video, prompt)
+    motion = motion_diversity_reward(video, prompt)
+    
+    # CLIP alignment (if prompt available)
+    if prompt:
+        try:
+            clip_align = clip_text_alignment_reward(video, prompt, device)
+        except Exception:
+            clip_align = 0.5
+    else:
+        clip_align = 0.5
+    
+    # DINO tracking
+    try:
+        dino_consistency = dino_subject_consistency_reward(video, prompt, device)
+    except Exception:
+        dino_consistency = 0.5
+    
+    # Weighted combination
+    total = (
+        0.3 * clip_align +
+        0.3 * dino_consistency +
+        0.2 * quality +
+        0.2 * motion
+    )
+    
     return float(total)
 
 
@@ -885,7 +829,7 @@ def comprehensive_grpo_reward(
     if use_clip and use_dino and use_physics:
         # All modalities: Balanced weighting
         total_reward = (
-            0.25 * scores['clip_alignment'] +
+            0.8 * scores['clip_alignment'] +
             0.15 * scores['clip_temporal'] +
             0.15 * scores['dino_consistency'] +
             0.10 * scores['dino_presence'] +
@@ -896,7 +840,7 @@ def comprehensive_grpo_reward(
     elif use_clip and use_dino:
         # CLIP + DINO only
         total_reward = (
-            0.4 * scores['clip_alignment'] +
+            0.8 * scores['clip_alignment'] +
             0.3 * scores['clip_temporal'] +
             0.2 * scores['dino_consistency'] +
             0.1 * scores['dino_presence']
