@@ -7,7 +7,6 @@ import os
 import numpy as np
 from PIL import Image
 import imageio
-
 try:
     import google.generativeai as genai
     print("✓ Libraries imported")
@@ -19,7 +18,9 @@ except ImportError as e:
 # Configuration
 GEMINI_API_KEY = "AIzaSyCeZPolffTxxQQDVKbrb3U7M1MM-oLo_YU"
 Ball_bouncing_VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_a-ball-bouncing-down-a-staircase_2025_320x512x160_0.mp4"
-VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_corgi-walking-down-the-street_2025_320x512x160_0.mp4"
+#VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_corgi-walking-down-the-street_2025_320x512x160_0.mp4"
+VIDEO_PATH = "frame_by_frame_video/beam_Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky._0.mp4"
+#VIDEO_PATH = "frame_by_frame_video/Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky_0.mp4"
 print("="*70)
 print("🎬 Gemini VLM Video Reasoning Evaluation")
 print("="*70)
@@ -92,27 +93,25 @@ model = genai.GenerativeModel(model_to_use)
 
 # Create reasoning evaluation prompt
 reasoning_prompt = """
-Analyze this video sequence of a ball bouncing down a staircase.
+Analyze this video Flocks of birds spiral upwards in synchronized arcs, weaving around the rooftops before scattering into the open sky.
 
 Rate the following aspects on a scale of 0-10:
 
-Physics REASONING: Does it follow physics laws?
-   - Gravity causes downward acceleration
-   - Energy conserved/dissipated appropriately
-   - Realistic motion dynamics
+textual consistency: Is the text consistent with the video?
 
 motion CONSISTENCY: Is the motion coherent?
-   - No teleportation or jumps
-   - Smooth continuous motion
-   - Consistent with staircase environment
+   - The birds are flying in a spiral pattern
+   - The birds are weaving around the rooftops
+   - The birds are scattering into the open sky
 
 Respond in this format:
 
-physics Reasoning: [score]/10
+textual Consistency: [score]/10
 motion Consistency: [score]/10
 Overall Score: [average]/10
 
 Brief explanation: [Why these scores?]
+Brief explanation: [How to improve the video to ge a higher score?]
 """
 
 # Send to Gemini

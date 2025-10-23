@@ -7,7 +7,6 @@ cd ltx_video_source
 
 # Set GPU
 export CUDA_VISIBLE_DEVICES=3
-
 # Configuration
 PROMPT_FILE="../physics_text.txt"
 CONFIG="configs/ltxv-2b-0.9.8-distilled.yaml"

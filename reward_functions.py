@@ -657,9 +657,6 @@ def combined_physics_reward(video: torch.Tensor, prompt: str = None) -> float:
     
     return float(total)
 
-
-
-
 # ============================================================================
 # TRAINING UTILITIES
 # ============================================================================
@@ -685,7 +682,7 @@ def collect_vlm_training_data(
         List of training examples: [{'video': tensor, 'vlm_score': float}, ...]
     """
     print(f"\n{'='*70}")
-    print(f"Collecting VLM Training Data")
+    print("Collecting VLM Training Data")
     print(f"{'='*70}")
     print(f"Prompts: {len(prompts)}")
     print(f"Videos per prompt: {videos_per_prompt}")
@@ -762,7 +759,7 @@ def train_reward_model_from_vlm(
         Trained VideoRewardModel
     """
     print(f"\n{'='*70}")
-    print(f"Training Reward Model from VLM Data")
+    print("Training Reward Model from VLM Data")
     print(f"{'='*70}\n")
     
     # Load training data
@@ -846,10 +843,6 @@ def grpo_reward_function(
     elif use_physics:
         # Use physics-aware hand-crafted rewards
         reward = combined_physics_reward(video, prompt)
-    else:
-        # Use standard hand-crafted heuristics
-        reward = combined_hand_crafted_reward(video, prompt)
-    
     return reward
 
 

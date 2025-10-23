@@ -19,8 +19,7 @@ from reward_functions import (
         physics_trajectory_smoothness,
         physics_momentum_conservation,
         physics_gravity_consistency,
-        temporal_consistency_reward,
-        video_quality_reward,
+        grpo_reward_function,
     )
 
 global CHANNEL_SIZE 
@@ -170,6 +169,8 @@ def video_rollout(
                 'num_inference_steps': num_inference_steps,
                 'latent_shape': latent_shape,
             },
+            reward=0.0,  # Initialize with default reward
+            reward_info={}  # Initialize with empty reward info
         )
         
         candidates.append(episode)
@@ -247,9 +248,9 @@ def evaluate_episodes_with_physics_rewards(
         elif reward_type == 'gravity':
             reward = physics_gravity_consistency(episode.video, episode.prompt)
         elif reward_type == 'temporal':
-            reward = temporal_consistency_reward(episode.video, episode.prompt)
+            reward = grpo_reward_function(episode.video, episode.prompt, use_physics=False)
         elif reward_type == 'quality':
-            reward = video_quality_reward(episode.video, episode.prompt)
+            reward = grpo_reward_function(episode.video, episode.prompt, use_physics=False)
         elif reward_type == 'custom' and custom_reward_fn is not None:
             reward = custom_reward_fn(episode.video, episode.prompt)
         else:
@@ -314,7 +315,7 @@ def normalize_rewards_per_group(candidates: List[videoepisode]) -> List[videoepi
 def grpo_search_with_physics_rewards(
     video_pipeline,
     prompt: str,
-    num_rounds: int = 3,
+    num_rounds: int = 5,
     candidates_per_round: int = 16,
     reward_type: str = 'combined_physics',
     base_seed: int = 2025,
@@ -373,51 +374,80 @@ def grpo_search_with_physics_rewards(
     
     for round_idx in range(num_rounds):
         print(f"\n{'='*70}")
-        print(f"Round {round_idx + 1}/{num_rounds}")
+        print(f"🔄 Round {round_idx + 1}/{num_rounds} - Starting...")
         print(f"{'='*70}")
         
-        # Generate candidates (would need to pass anchors - simplified here)
-        # In practice, you'd modify video_rollout to accept custom anchors
-        episodes = video_rollout(
-            video_pipeline=video_pipeline,
-            prompt=prompt,
-            num_candidates_per_prompt=candidates_per_round,
-            base_seed=base_seed + round_idx * 1000,
-            device=device,
-        )
-        
-        # Evaluate with physics rewards
-        episodes = evaluate_episodes_with_physics_rewards(
-            episodes=episodes,
-            reward_type=reward_type,
-        )
-        
-        # GRPO normalization
-        episodes = normalize_rewards_per_group(episodes)
-        
-        # Find best this round
-        best_this_round = max(episodes, key=lambda ep: ep.reward)
-        
-        # Update overall best
-        if best_overall is None or best_this_round.reward > best_overall.reward:
-            best_overall = best_this_round
-            print(f"\n✨ New best found! Reward: {best_overall.reward:.4f}")
-        
-        print(f"\nRound {round_idx+1} Summary:")
-        print(f"  Best: {best_this_round.reward:.4f}")
-        print(f"  Advantage: {best_this_round.reward_info.get('advantage', 0):+.2f}")
-        
-        # Update trajectory policy (except last round)
-        if round_idx < num_rounds - 1:
-            latent_a, latent_b = update_policy_for_latent_trajectories(
-                candidates=episodes,
-                latent_a=latent_a,
-                latent_b=latent_b,
-                learning_rate=0.1 / (round_idx + 1),
+        try:
+            # Generate candidates (would need to pass anchors - simplified here)
+            # In practice, you'd modify video_rollout to accept custom anchors
+            print(f"📹 Generating {candidates_per_round} video candidates...")
+            episodes = video_rollout(
+                video_pipeline=video_pipeline,
                 prompt=prompt,
+                num_candidates_per_prompt=candidates_per_round,
+                base_seed=base_seed + round_idx * 1000,
+                device=device,
             )
-        
-        all_episodes.extend(episodes)
+            print(f"✅ Generated {len(episodes)} episodes")
+            
+            # Evaluate with physics rewards
+            print(f"🏆 Computing physics rewards ({reward_type})...")
+            episodes = evaluate_episodes_with_physics_rewards(
+                episodes=episodes,
+                reward_type=reward_type,
+            )
+            print(f"✅ Rewards computed")
+            
+            # Add video quality rewards (temporal diversity + spatial complexity)
+            for episode in episodes:
+                temporal_score = video_temporal_diversity(episode.video)
+                spatial_score = video_spatial_complexity(episode.video)
+                
+                # Combine with existing reward
+                quality_bonus = 0.1 * (temporal_score + spatial_score) / 2
+                episode.reward += quality_bonus
+                
+                # Store in reward info
+                if not hasattr(episode, 'reward_info') or episode.reward_info is None:
+                    episode.reward_info = {}
+                episode.reward_info['temporal_diversity'] = temporal_score
+                episode.reward_info['spatial_complexity'] = spatial_score
+                episode.reward_info['quality_bonus'] = quality_bonus
+            
+            # GRPO normalization
+            episodes = normalize_rewards_per_group(episodes)
+            
+            # Find best this round
+            best_this_round = max(episodes, key=lambda ep: ep.reward)
+            
+            # Update overall best
+            if best_overall is None or best_this_round.reward > best_overall.reward:
+                best_overall = best_this_round
+                print(f"\n✨ New best found! Reward: {best_overall.reward:.4f}")
+            
+            print(f"\nRound {round_idx+1} Summary:")
+            print(f"  Best: {best_this_round.reward:.4f}")
+            print(f"  Advantage: {best_this_round.reward_info.get('advantage', 0):+.2f}")
+            
+            # Update trajectory policy (except last round)
+            if round_idx < num_rounds - 1:
+                latent_a, latent_b = update_policy_for_latent_trajectories(
+                    candidates=episodes,
+                    latent_a=latent_a,
+                    latent_b=latent_b,
+                    learning_rate=0.1 / (round_idx + 1),
+                    prompt=prompt,
+                )
+            
+            # Only keep track of episode count, not all episodes (memory optimization)
+            all_episodes.extend(episodes)
+            print(f"✅ Round {round_idx + 1} completed! Total episodes so far: {len(all_episodes)}")
+            print(f"   💾 Memory: Only best video will be saved (not all {len(all_episodes)} videos)")
+            
+        except Exception as round_error:
+            print(f"❌ Round {round_idx + 1} failed: {round_error}")
+            print(f"   Continuing to next round...")
+            continue
     
     print(f"\n{'='*80}")
     print(f"🏆 GRPO Search Complete!")
@@ -433,17 +463,46 @@ def grpo_search_with_physics_rewards(
     }
 
 
-def compute_entropy_reward(video_tensor: torch.Tensor) -> float:
+def video_temporal_diversity(video_tensor: torch.Tensor) -> float:
     """
-    Compute entropy reward for a video tensor
+    Measure temporal diversity in video (meaningful replacement for entropy)
+    
     Args:
-        video_tensor: Video tensor
+        video_tensor: Video tensor [B, C, T, H, W]
     Returns:
-        Entropy reward
+        Temporal diversity score [0, 1]
     """
-    probs = torch.nn.functional.softmax(video_tensor, dim=1)
-    entropy = torch.logsumexp(probs, dim=1) - torch.sum(probs * video_tensor, dim=1)
-    return entropy
+    if video_tensor.dim() != 5:
+        return 0.5
+    
+    # Measure how much frames differ from each other
+    frame_differences = torch.diff(video_tensor, dim=2)  # [B, C, T-1, H, W]
+    temporal_diversity = frame_differences.var().item()
+    
+    # Normalize to [0, 1] range
+    normalized_diversity = min(temporal_diversity * 10, 1.0)
+    return normalized_diversity
+
+def video_spatial_complexity(video_tensor: torch.Tensor) -> float:
+    """
+    Measure spatial complexity in video frames
+    
+    Args:
+        video_tensor: Video tensor [B, C, T, H, W]
+    Returns:
+        Spatial complexity score [0, 1]
+    """
+    if video_tensor.dim() != 5:
+        return 0.5
+    
+    # Compute spatial gradients
+    grad_x = torch.diff(video_tensor, dim=-1)  # Horizontal gradients
+    grad_y = torch.diff(video_tensor, dim=-2)  # Vertical gradients
+    
+    # Spatial complexity
+    complexity = (grad_x.var() + grad_y.var()).item()
+    normalized_complexity = min(complexity * 5, 1.0)
+    return normalized_complexity
 
 def improve_temporal_smoothness(
     latent_anchor: torch.Tensor,
@@ -701,7 +760,7 @@ def update_policy_for_latent_trajectories(
         PHYSICS: Inject domain knowledge (acceleration, etc.)
     """
     print(f"\n{'='*70}")
-    print(f"🎬 COMPLETE Latent Trajectory Improvement")
+    print("🎬 COMPLETE Latent Trajectory Improvement")
     print(f"{'='*70}")
     
     # Find best candidate
@@ -714,7 +773,7 @@ def update_policy_for_latent_trajectories(
     # ============================================================
     # COMPONENT 1: Update Anchor POSITIONS (Spatial)
     # ============================================================
-    print(f"\n1️⃣ Updating anchor POSITIONS...")
+    print("\n1️⃣ Updating anchor POSITIONS...")
     
     gradient = estimate_latent_gradient(candidates, latent_a, latent_b)
     gradient_norm = torch.norm(gradient)
@@ -812,7 +871,6 @@ def update_policy_for_latent_trajectories(
         strength=0.3
     )
 
-    
     return new_latent_a, new_latent_b
 
 
