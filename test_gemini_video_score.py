@@ -17,10 +17,11 @@ except ImportError as e:
 
 # Configuration
 GEMINI_API_KEY = "AIzaSyCeZPolffTxxQQDVKbrb3U7M1MM-oLo_YU"
-Ball_bouncing_VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_a-ball-bouncing-down-a-staircase_2025_320x512x160_0.mp4"
+#Ball_bouncing_VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_a-ball-bouncing-down-a-staircase_2025_320x512x160_0.mp4"
 #VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_corgi-walking-down-the-street_2025_320x512x160_0.mp4"
-VIDEO_PATH = "frame_by_frame_video/beam_Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky._0.mp4"
+#VIDEO_PATH = "frame_by_frame_video/beam_Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky._0.mp4"
 #VIDEO_PATH = "frame_by_frame_video/Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky_0.mp4"
+VIDEO_PATH = "outputs/2025-10-22/video_output_0_a-ball-bouncing-down-a-staircase_2025_512x768x121_0.mp4"
 print("="*70)
 print("🎬 Gemini VLM Video Reasoning Evaluation")
 print("="*70)
@@ -91,27 +92,34 @@ print(f"\n✓ Using model: {model_to_use}")
 
 model = genai.GenerativeModel(model_to_use)
 
-# Create reasoning evaluation prompt
+# Create physics reasoning and motion consistency evaluation prompt
 reasoning_prompt = """
-Analyze this video Flocks of birds spiral upwards in synchronized arcs, weaving around the rooftops before scattering into the open sky.
+Analyze this video of a ball bouncing down a staircase, hitting each step sequentially as it falls.
 
 Rate the following aspects on a scale of 0-10:
 
-textual consistency: Is the text consistent with the video?
+**PHYSICS REASONING:**
+- Does the ball accelerate downward due to gravity between bounces?
+- Are the bounce heights decreasing over time due to energy loss?
+- Does the ball follow realistic parabolic trajectories between step contacts?
+- Are the bounce angles physically plausible (angle of incidence ≈ angle of reflection)?
+- Does the ball lose energy with each bounce (reduced bounce height)?
+- Is the ball's speed increasing as it progresses down the staircase?
 
-motion CONSISTENCY: Is the motion coherent?
-   - The birds are flying in a spiral pattern
-   - The birds are weaving around the rooftops
-   - The birds are scattering into the open sky
+**MOTION CONSISTENCY:**
+- Are the motion patterns smooth and continuous between frames?
+- Does the ball maintain forward momentum while bouncing down?
+- Is the overall motion sequence temporally coherent and believable?
+- Does the ball interact correctly with each step of the staircase?
 
 Respond in this format:
 
-textual Consistency: [score]/10
-motion Consistency: [score]/10
+Physics Reasoning: [score]/10
+Motion Consistency: [score]/10
 Overall Score: [average]/10
 
-Brief explanation: [Why these scores?]
-Brief explanation: [How to improve the video to ge a higher score?]
+Brief Explanation: [Why these scores? What works well and what doesn't?]
+Improvement Suggestions: [How to enhance the physics and motion realism?]
 """
 
 # Send to Gemini

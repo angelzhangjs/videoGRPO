@@ -4,7 +4,7 @@
 cd ltx_video_source
 
 # Set GPU
-export CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES=6
 
 echo "Generating video..."
 python inference.py \

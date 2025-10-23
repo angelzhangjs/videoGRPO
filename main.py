@@ -54,8 +54,8 @@ def create_ltx_video_pipeline():
         # Create inference config
         config = InferenceConfig(
             pipeline_config="ltx_video_source/configs/ltxv-2b-0.9.8-distilled.yaml",
-            height=512,
-            width=768,
+            height = 512,  # Instead of 512
+            width = 768, # Instead of 768
             num_frames=121,
             seed=2025
         )
@@ -80,7 +80,7 @@ def main():
     # Create output folder for GRPO results with unique timestamp
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Include milliseconds
-    output_dir = f"grpo_outputs/{timestamp}"
+    output_dir = f"grpo_test/{timestamp}"
     os.makedirs(output_dir, exist_ok=True)
     print(f"📁 Output directory: {output_dir}")
     print(f"🕐 Started at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -130,13 +130,16 @@ def main():
         # Create video pipeline using LTX-Video inference (PURE TENSOR - no intermediate MP4s)
         def ltx_video_pipeline(prompt, **kwargs):
             # Memory-optimized video dimensions
+            # HIGH-QUALITY settings for H100 80GB GPU - Use LARGEST model!
             config = InferenceConfig(
                 prompt=prompt,
-                pipeline_config="ltx_video_source/configs/ltxv-2b-0.9.8-distilled.yaml",
-                height=kwargs.get('height', 512),
-                width=kwargs.get('width', 768),
-                num_frames=kwargs.get('num_frames', 121),
-                seed=kwargs.get('seed', 2025)
+                pipeline_config="ltx_video_source/configs/ltxv-13b-0.9.8-distilled.yaml",  # 13B model (best quality!)
+                height=704,  # High resolution
+                width=1216,  # High resolution (16:9 aspect ratio)
+                num_frames=161,  # 10 seconds at 16 fps (161 frames = 10.06 seconds)
+                frame_rate=16,  # 16 fps (standard for LTX-Video)
+                seed=kwargs.get('seed', 2025),
+                offload_to_cpu=False,  # H100 has 80GB - keep on GPU for max speed
             )
             
             # Generate video but work with tensors directly (no MP4 saving during GRPO)
@@ -149,10 +152,27 @@ def main():
                 class VideoResult:
                     def __init__(self, inference_result):
                         try:
+                            # Debug: Print what LTX-Video actually returns
+                            print(f"🔍 Debug: inference_result type: {type(inference_result)}")
+                            print(f"🔍 Debug: inference_result attributes: {dir(inference_result) if hasattr(inference_result, '__dict__') else 'No attributes'}")
+                            
+                            # Check for common LTX-Video return attributes
+                            possible_attrs = ['images', 'frames', 'videos', 'samples', 'output']
+                            for attr in possible_attrs:
+                                if hasattr(inference_result, attr):
+                                    attr_value = getattr(inference_result, attr)
+                                    print(f"🔍 Debug: Found {attr} - type: {type(attr_value)}, shape: {getattr(attr_value, 'shape', 'No shape')}")
+                            
                             # If LTX-Video returns tensor directly, use it
                             if hasattr(inference_result, 'images') and isinstance(inference_result.images, torch.Tensor):
                                 self.images = inference_result.images
-                                print("✅ Using direct tensor from LTX-Video")
+                                print("✅ Using direct tensor from LTX-Video (images)")
+                            elif hasattr(inference_result, 'frames') and isinstance(inference_result.frames, torch.Tensor):
+                                self.images = inference_result.frames
+                                print("✅ Using direct tensor from LTX-Video (frames)")
+                            elif hasattr(inference_result, 'videos') and isinstance(inference_result.videos, torch.Tensor):
+                                self.images = inference_result.videos
+                                print("✅ Using direct tensor from LTX-Video (videos)")
                             else:
                                 # Fallback: Load from the generated MP4 but don't keep it
                                 import glob
@@ -183,14 +203,12 @@ def main():
                                     except Exception:
                                         pass  # Ignore deletion errors
                                 else:
-                                    # Fallback tensor
-                                    self.images = torch.randn(1, 3, kwargs.get('num_frames', 121), 
-                                                            kwargs.get('height', 512), kwargs.get('width', 768))
+                                    # Fallback tensor (use same small dimensions as config)
+                                    self.images = torch.randn(1, 3, 81, 256, 384)  # Small for memory
                                     print("⚠️ Using fallback random tensor")
                         except Exception as e:
                             print(f"⚠️ Tensor creation error: {e}")
-                            self.images = torch.randn(1, 3, kwargs.get('num_frames', 121), 
-                                                    kwargs.get('height', 512), kwargs.get('width', 768))
+                            self.images = torch.randn(1, 3, 81, 256, 384)  # Small fallback for memory
                 
                 return VideoResult(result)
                 
@@ -266,8 +284,8 @@ def main():
             result = grpo_search_with_physics_rewards(
                 video_pipeline=video_pipeline,
                 prompt=prompt,
-                num_rounds=3,                    # Reduced from 5 to 3 for memory
-                candidates_per_round=4,          # Reduced from 8 to 4 for memory
+                num_rounds=10,                    # Reduced from 5 to 3 for memory
+                candidates_per_round=16,          # 16 candidates for better GRPO exploration
                 reward_type='combined_physics',  # Use comprehensive physics rewards
                 base_seed=2025 + i * 1000,      # Different seed per prompt
                 device=device,
@@ -344,8 +362,8 @@ def main():
                     'grpo_algorithm': {
                         'total_videos_generated': len(all_episodes),
                         'videos_saved_to_disk': 1,
-                        'rounds_completed': 5,
-                        'candidates_per_round': 8,
+                        'rounds_completed': 10,
+                        'candidates_per_round': 16,
                         'selection_method': 'highest_advantage_reward_with_clip'
                     },
                     'reward_components': {

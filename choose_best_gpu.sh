@@ -5,20 +5,27 @@ echo "======================"
 
 # Get GPU memory info
 nvidia-smi --query-gpu=index,memory.free,memory.used,memory.total --format=csv,noheader,nounits | while IFS=', ' read -r gpu free used total; do
-    free_gb=$(echo "scale=1; $free / 1024" | bc)
-    used_gb=$(echo "scale=1; $used / 1024" | bc)
-    total_gb=$(echo "scale=1; $total / 1024" | bc)
-    usage_percent=$(echo "scale=1; $used * 100 / $total" | bc)
+    free_gb=$((free / 1024))
+    used_gb=$((used / 1024))
+    total_gb=$((total / 1024))
+    usage_percent=$((used * 100 / total))
     
     echo "GPU $gpu: ${free_gb}GB free, ${used_gb}GB used (${usage_percent}% usage)"
 done
 
 echo ""
-echo "🎯 Recommendation:"
-echo "GPU 3 has the most free memory (21.5GB) - BEST CHOICE"
-echo "GPU 7 has 9.6GB free - Second choice"
-echo "GPU 6 has 9.6GB free - Third choice"
+echo "🎯 Finding GPU with most free memory..."
+
+# Find GPU with maximum free memory
+best_gpu=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1)
+best_free=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f2)
+best_free_gb=$((best_free / 1024))
+
+echo "✅ BEST GPU: $best_gpu (${best_free_gb}GB free)"
 echo ""
-echo "✅ Current setting: CUDA_VISIBLE_DEVICES=\"3\" (optimal)"
+echo "📝 Recommended command:"
+echo "   export CUDA_VISIBLE_DEVICES=$best_gpu"
+echo "   python main.py"
 echo ""
-echo "🚀 Ready to run: ./main.sh"
+echo "Or update main.sh to use GPU $best_gpu"
+

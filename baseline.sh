@@ -6,9 +6,9 @@
 cd ltx_video_source
 
 # Set GPU
-export CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES=6
 # Configuration
-PROMPT_FILE="../physics_text.txt"
+PROMPT_FILE="../final_prompts.txt"
 CONFIG="configs/ltxv-2b-0.9.8-distilled.yaml"
 OUTPUT_BASE="../outputs/batch_$(date +%Y%m%d_%H%M%S)"
 HEIGHT=320
