@@ -13,7 +13,7 @@ CONFIG="configs/ltxv-2b-0.9.8-distilled.yaml"
 OUTPUT_BASE="../outputs/batch_$(date +%Y%m%d_%H%M%S)"
 HEIGHT=320
 WIDTH=512
-NUM_FRAMES=160
+NUM_FRAMES=80
 SEED=2025
 FRAME_RATE=16
 
@@ -53,8 +53,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     # Skip comments and empty lines
     if [[ "$line" =~ ^#.*$ ]] || [[ -z "${line// }" ]]; then
         continue
-    fi
-    
+    fi 
     COUNTER=$((COUNTER + 1))
     
     echo "========================================="
@@ -84,7 +83,6 @@ while IFS= read -r line || [ -n "$line" ]; do
         echo "❌ Failed: Error generating video for prompt $COUNTER"
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
-    
     echo ""
     
 done < "$PROMPT_FILE"
