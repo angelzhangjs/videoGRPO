@@ -2,13 +2,11 @@
 
 # Navigate to ltx_video_source directory where inference.py is located
 cd ltx_video_source
-
 # Set GPU
-export CUDA_VISIBLE_DEVICES=6
-
+export CUDA_VISIBLE_DEVICES=5
 echo "Generating video..."
 python inference.py \
-    --prompt "a bolt of lightning splits a rock, and a person jumps out from inside the rock" \
+    --prompt "A ball bouncing down a staircase, hitting each step sequentially as it falls" \
     --pipeline_config "configs/ltxv-2b-0.9.8-distilled.yaml" \
     --height 320 \
     --width 512 \

@@ -21,7 +21,7 @@ GEMINI_API_KEY = "AIzaSyCeZPolffTxxQQDVKbrb3U7M1MM-oLo_YU"
 #VIDEO_PATH = "outputs/physics_outputs/prompt_004/video_output_0_corgi-walking-down-the-street_2025_320x512x160_0.mp4"
 #VIDEO_PATH = "frame_by_frame_video/beam_Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky._0.mp4"
 #VIDEO_PATH = "frame_by_frame_video/Flocks_of_birds_spiral_upwards_in_synchronized_arcs_weaving_around_the_rooftops_before_scattering_into_the_open_sky_0.mp4"
-VIDEO_PATH = "outputs/2025-10-22/video_output_0_a-ball-bouncing-down-a-staircase_2025_512x768x121_0.mp4"
+VIDEO_PATH = "outputs/video_output_0_a-ball-bouncing-up-a-staircase_2025_320x512x64_0.mp4"
 print("="*70)
 print("🎬 Gemini VLM Video Reasoning Evaluation")
 print("="*70)
@@ -94,7 +94,7 @@ model = genai.GenerativeModel(model_to_use)
 
 # Create physics reasoning and motion consistency evaluation prompt
 reasoning_prompt = """
-Analyze this video of a ball bouncing down a staircase, hitting each step sequentially as it falls.
+Analyze this video of A ball bouncing up a staircase, hitting each step sequentially as it arrives.
 
 Rate the following aspects on a scale of 0-10:
 

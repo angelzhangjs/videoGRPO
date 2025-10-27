@@ -2,23 +2,20 @@
 """
 Main script to run video generation using GRPO with physics rewards
 """
-
 import os
 import sys
 import torch
 import numpy as np
-
-# Fix tokenizers warning
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# Enable CUDA debugging for error diagnosis
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # Enable for debugging GPU errors
-
-# Memory optimization
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
+import datetime
+import json
+import gc
+import imageio
+import glob
+import traceback
 
 # Add ltx_video_source to path
-sys.path.append("ltx_video_source")
+ltx_path = os.path.join(os.path.dirname(__file__), "ltx_video_source")
+sys.path.insert(0, ltx_path)
 
 # Import LTX-Video components
 from ltx_video.inference import infer, InferenceConfig
@@ -30,18 +27,13 @@ def check_gpu_memory():
     """Check available GPU memory and suggest optimizations"""
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated(0) / 1024**3
-        cached = torch.cuda.memory_reserved(0) / 1024**3
         total = torch.cuda.get_device_properties(0).total_memory / 1024**3
         free = total - allocated
         
-        print("🔍 GPU Memory Status:")
-        print(f"   Total: {total:.1f}GB")
-        print(f"   Allocated: {allocated:.1f}GB")
-        print(f"   Cached: {cached:.1f}GB") 
-        print(f"   Free: {free:.1f}GB")
+        print(f"   GPU Memory: {allocated:.1f}GB used / {total:.1f}GB total ({free:.1f}GB free)")
         
-        if free < 5.0:  # Less than 5GB free
-            print("⚠️  Low memory warning! Consider reducing video dimensions or candidates")
+        if free < 5.0:
+            print("   ⚠️ Low memory warning!")
             return False
         return True
     return False
@@ -54,8 +46,8 @@ def create_ltx_video_pipeline():
         # Create inference config
         config = InferenceConfig(
             pipeline_config="ltx_video_source/configs/ltxv-2b-0.9.8-distilled.yaml",
-            height = 512,  # Instead of 512
-            width = 768, # Instead of 768
+            height = 320, 
+            width = 512, 
             num_frames=121,
             seed=2025
         )
@@ -75,50 +67,27 @@ def main():
     Main function to run GRPO video generation
     """
     print("🚀 Starting GRPO Video Generation")
-    print("=" * 50)
+    print("=" * 70)
     
-    # Create output folder for GRPO results with unique timestamp
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Include milliseconds
-    output_dir = f"grpo_test/{timestamp}"
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"📁 Output directory: {output_dir}")
-    print(f"🕐 Started at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Set device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"🔧 Device: {device}")
     
-    # Set device with error handling
+    # Create output directory (use tmp or specify custom path if disk full)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Try to create output directory, handle disk full error
     try:
-        if torch.cuda.is_available():
-            device_count = torch.cuda.device_count()
-            print(f"🔍 CUDA available: {device_count} device(s) visible")
-            
-            # Test GPU accessibility
-            device = "cuda:0"  # GPU 3 becomes cuda:0 with CUDA_VISIBLE_DEVICES="3"
-            
-            # Try to create a small tensor to test GPU
-            test_tensor = torch.randn(10, 10).to(device)
-            print(f"✅ GPU test successful: {device} (physical GPU 3)")
-            del test_tensor
-            torch.cuda.empty_cache()
-            
-            print(f"Available GPUs: {device_count}")
-            
-            # Check memory status
-            for i in range(device_count):
-                try:
-                    allocated = torch.cuda.memory_allocated(i) / 1024**3
-                    cached = torch.cuda.memory_reserved(i) / 1024**3
-                    total = torch.cuda.get_device_properties(i).total_memory / 1024**3
-                    print(f"  GPU {i}: {allocated:.1f}GB allocated, {cached:.1f}GB cached, {total:.1f}GB total")
-                except Exception as gpu_error:
-                    print(f"  GPU {i}: Error accessing - {gpu_error}")
-        else:
-            device = "cpu"
-            print("⚠️ CUDA not available, using CPU")
-            
-    except Exception as cuda_error:
-        print(f"❌ CUDA initialization error: {cuda_error}")
-        print("🔄 Falling back to CPU")
-        device = "cpu"
+        output_dir = f"grpo_outputs/{timestamp}"
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"📁 Output directory: {output_dir}")
+    except OSError as e:
+        # Disk quota exceeded - use /tmp instead
+        print("⚠️  Disk quota exceeded in current directory")
+        output_dir = f"/tmp/grpo_outputs/{timestamp}"
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"📁 Using /tmp directory: {output_dir}")
+        print("⚠️  Note: /tmp files may be deleted on reboot!")
     
     # Create video pipeline
     print("\n📹 Initializing video pipeline...")
@@ -128,98 +97,75 @@ def main():
         # LTX-Video imports already done at top of file
         
         # Create video pipeline using LTX-Video inference (PURE TENSOR - no intermediate MP4s)
+        
+        # Define result class outside to be accessible everywhere
+        class VideoResult:
+            def __init__(self, tensor):
+                self.images = tensor
+        
         def ltx_video_pipeline(prompt, **kwargs):
             # Memory-optimized video dimensions
             # HIGH-QUALITY settings for H100 80GB GPU - Use LARGEST model!
+            req_height = kwargs.get('height', 320)
+            req_width = kwargs.get('width', 512)
+            req_num_frames = kwargs.get('num_frames', 161)
+            req_seed = kwargs.get('seed', 2025)
+            req_guidance = kwargs.get('guidance_scale', None)
             config = InferenceConfig(
                 prompt=prompt,
-                pipeline_config="ltx_video_source/configs/ltxv-13b-0.9.8-distilled.yaml",  # 13B model (best quality!)
-                height=704,  # High resolution
-                width=1216,  # High resolution (16:9 aspect ratio)
-                num_frames=161,  # 10 seconds at 16 fps (161 frames = 10.06 seconds)
+                pipeline_config="ltx_video_source/configs/ltxv-2b-0.9.8-distilled.yaml",  # 2B model (faster, less memory)
+                height=req_height,
+                width=req_width,
+                num_frames=req_num_frames,  # Respect caller's request
                 frame_rate=16,  # 16 fps (standard for LTX-Video)
-                seed=kwargs.get('seed', 2025),
+                seed=req_seed,
                 offload_to_cpu=False,  # H100 has 80GB - keep on GPU for max speed
+                output_path=output_dir,  # Save directly under grpo_outputs/<timestamp>
             )
+            # Wire GRPO overrides through to the pipeline
+            if req_guidance is not None:
+                config.guidance_scale_override = float(req_guidance)
+            # Do NOT pass latents into LTX pipeline; it asserts when starting at timestep=1.0.
+            # We'll drive diversity via seed and guidance instead.
             
-            # Generate video but work with tensors directly (no MP4 saving during GRPO)
+            # Generate video
             try:
-                # Use LTX-Video pipeline directly to get tensor output
-                # This avoids saving intermediate MP4 files
-                result = infer(config)
+                # Ensure output directory exists
+                os.makedirs(output_dir, exist_ok=True)
                 
-                # Create result object that GRPO expects (PURE TENSOR WORKFLOW)
-                class VideoResult:
-                    def __init__(self, inference_result):
-                        try:
-                            # Debug: Print what LTX-Video actually returns
-                            print(f"🔍 Debug: inference_result type: {type(inference_result)}")
-                            print(f"🔍 Debug: inference_result attributes: {dir(inference_result) if hasattr(inference_result, '__dict__') else 'No attributes'}")
-                            
-                            # Check for common LTX-Video return attributes
-                            possible_attrs = ['images', 'frames', 'videos', 'samples', 'output']
-                            for attr in possible_attrs:
-                                if hasattr(inference_result, attr):
-                                    attr_value = getattr(inference_result, attr)
-                                    print(f"🔍 Debug: Found {attr} - type: {type(attr_value)}, shape: {getattr(attr_value, 'shape', 'No shape')}")
-                            
-                            # If LTX-Video returns tensor directly, use it
-                            if hasattr(inference_result, 'images') and isinstance(inference_result.images, torch.Tensor):
-                                self.images = inference_result.images
-                                print("✅ Using direct tensor from LTX-Video (images)")
-                            elif hasattr(inference_result, 'frames') and isinstance(inference_result.frames, torch.Tensor):
-                                self.images = inference_result.frames
-                                print("✅ Using direct tensor from LTX-Video (frames)")
-                            elif hasattr(inference_result, 'videos') and isinstance(inference_result.videos, torch.Tensor):
-                                self.images = inference_result.videos
-                                print("✅ Using direct tensor from LTX-Video (videos)")
-                            else:
-                                # Fallback: Load from the generated MP4 but don't keep it
-                                import glob
-                                video_files = glob.glob("ltx_video_source/outputs/**/*.mp4", recursive=True)
-                                if video_files:
-                                    latest_video = max(video_files, key=os.path.getctime)
-                                    
-                                    # Load video frames into tensor
-                                    import imageio
-                                    video_frames = imageio.mimread(latest_video)
-                                    
-                                    # Convert to tensor [1, C, T, H, W]
-                                    video_array = np.array(video_frames)  # [T, H, W, C]
-                                    video_tensor = torch.from_numpy(video_array).float()
-                                    video_tensor = video_tensor.permute(3, 0, 1, 2).unsqueeze(0)  # [1, C, T, H, W]
-                                    video_tensor = (video_tensor / 255.0 - 0.5) * 2  # Normalize to [-1, 1]
-                                    
-                                    self.images = video_tensor
-                                    
-                                    # Delete the intermediate MP4 immediately after loading
-                                    try:
-                                        os.remove(latest_video)
-                                        print(f"🔄 Loaded tensor and deleted intermediate: {os.path.basename(latest_video)}")
-                                        
-                                        # Force memory cleanup after each video load
-                                        del video_frames, video_array
-                                        torch.cuda.empty_cache()
-                                    except Exception:
-                                        pass  # Ignore deletion errors
-                                else:
-                                    # Fallback tensor (use same small dimensions as config)
-                                    self.images = torch.randn(1, 3, 81, 256, 384)  # Small for memory
-                                    print("⚠️ Using fallback random tensor")
-                        except Exception as e:
-                            print(f"⚠️ Tensor creation error: {e}")
-                            self.images = torch.randn(1, 3, 81, 256, 384)  # Small fallback for memory
+                # infer() saves video to disk and returns None
+                print(f"   Generating video with seed {config.seed}...")
+                infer(config)
+                print("   ✓ infer() completed")
                 
-                return VideoResult(result)
+                # Load the saved video and return as tensor
+                video_files = glob.glob(f"{output_dir}/**/*.mp4", recursive=True)
+                print(f"   Found {len(video_files)} video files in {output_dir}")
                 
+                if video_files:
+                    latest_video = max(video_files, key=os.path.getctime) 
+                    # Load video as tensor
+                    video_frames = imageio.mimread(latest_video)
+                    video_np = np.array(video_frames)  # [T, H, W, C]
+                    video_tensor = torch.from_numpy(video_np).float()
+                    video_tensor = video_tensor.permute(3, 0, 1, 2).unsqueeze(0)  # [1, C, T, H, W]
+                    video_tensor = (video_tensor / 255.0 - 0.5) * 2  # Normalize to [-1, 1]
+                    
+                    # Keep the MP4 under grpo_outputs for user access
+                    return VideoResult(video_tensor)
+                else:
+                    print("⚠️ No video file generated, using fallback tensor")
+                    # Return fallback tensor instead of None
+                    fallback = torch.randn(1, 3, 161, 320, 512)
+                    return VideoResult(fallback)
+                    
             except Exception as e:
                 print(f"❌ Pipeline error: {e}")
-                # Return fallback result
-                class FallbackResult:
-                    def __init__(self):
-                        self.images = torch.randn(1, 3, kwargs.get('num_frames', 121), 
-                                                kwargs.get('height', 512), kwargs.get('width', 768))
-                return FallbackResult()
+                traceback.print_exc()
+                print("⚠️ Using fallback tensor")
+                # Always return valid result with .images attribute
+                fallback = torch.randn(1, 3, 161, 320, 512)
+                return VideoResult(fallback)
         
         video_pipeline = ltx_video_pipeline
         print("✅ Real LTX-Video pipeline created")
@@ -234,9 +180,7 @@ def main():
     
     # Run GRPO search for each prompt
     for i, prompt in enumerate(test_prompts):
-        print(f"\n{'='*70}")
         print(f"🎬 GRPO Generation {i+1}/{len(test_prompts)}")
-        print(f"{'='*70}")
         print(f"Prompt: '{prompt}'")
         
         try:
@@ -253,7 +197,6 @@ def main():
                     torch.cuda.synchronize()
                     
                     # Force garbage collection
-                    import gc
                     gc.collect()
                     
                     # Check memory status and warn if low
@@ -284,10 +227,10 @@ def main():
             result = grpo_search_with_physics_rewards(
                 video_pipeline=video_pipeline,
                 prompt=prompt,
-                num_rounds=10,                    # Reduced from 5 to 3 for memory
-                candidates_per_round=16,          # 16 candidates for better GRPO exploration
+                num_rounds=3,
+                candidates_per_round=24,
                 reward_type='combined_physics',  # Use comprehensive physics rewards
-                base_seed=2025 + i * 1000,      # Different seed per prompt
+                base_seed=2025,    # Different seed per prompt
                 device=device,
             )
             
@@ -339,7 +282,6 @@ def main():
                     video_np = ((video_tensor + 1) * 127.5).clamp(0, 255).byte()  # Denormalize to [0, 255]
                     video_np = video_np.permute(1, 2, 3, 0).cpu().numpy()  # [T, H, W, C]
                     
-                    import imageio
                     imageio.mimwrite(mp4_filename, video_np, fps=16, quality=8)
                     print(f"  🎬 Final best MP4: {mp4_filename}")
                     print(f"      ✨ This is the winner from {len(all_episodes)} candidates!")
@@ -349,7 +291,7 @@ def main():
                 
                 # Save comprehensive results summary
                 results_filename = f"{output_dir}/grpo_results_{i+1}_{prompt_safe}.json"
-                import json
+                
                 # Extract CLIP score for highlighting
                 clip_score = None
                 if hasattr(best_episode, 'reward_info') and best_episode.reward_info:

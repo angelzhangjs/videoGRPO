@@ -58,13 +58,15 @@ def video_rollout(
     video_pipeline, 
     prompt: str, 
     num_frames: int = 121,
-    height: int = 512,
-    width: int = 768,
+    height: int = 320,
+    width: int = 512,
     num_candidates_per_prompt: int = 16,
-    guidance_scale: float = 7.5,
-    num_inference_steps: int = 40,
+    guidance_scale: float = 1.3,
+    num_inference_steps: int = 48,
     device: str = "cuda",
     base_seed: int = 2025,
+    latent_anchor_a: Optional[torch.Tensor] = None,
+    latent_anchor_b: Optional[torch.Tensor] = None,
 ) -> List[videoepisode]:
     """
     Rollout multiple video candidates for a SINGLE prompt using 2D configuration sampling.
@@ -117,17 +119,21 @@ def video_rollout(
     # Generate multiple latent initializations for diversity
     candidates = []
     
-    # Create two anchor latents for interpolation
-    # Use same base_seed for reproducibility, but generate two different latents
-    torch.manual_seed(base_seed)
-    latent_a = torch.randn(latent_shape, device=device)
-    latent_b = torch.randn(latent_shape, device=device)  # Different draw from same seeded RNG
+    # Create or use provided anchor latents for interpolation
+    if latent_anchor_a is not None and latent_anchor_b is not None:
+        latent_a = latent_anchor_a
+        latent_b = latent_anchor_b
+    else:
+        # Use base_seed for reproducibility, but generate two different latents
+        torch.manual_seed(base_seed)
+        latent_a = torch.randn(latent_shape, device=device)
+        latent_b = torch.randn(latent_shape, device=device)  # Different draw from same seeded RNG
     
     # Get sampling configurations (alpha and guidance pairs)
     configs = create_sampling_configurations(
         number_of_samples=num_candidates_per_prompt,
         latent_range=(0.0, 1.0),
-        guidance_range=(guidance_scale * 0.7, guidance_scale * 1.3),  # Vary around base guidance
+        guidance_range=(1.0, 1.6),  # Narrow, stable guidance for LTX
         device=device,
     )
     
@@ -144,13 +150,14 @@ def video_rollout(
         # Generate video with this specific latent initialization and guidance
         # SAME prompt for all candidates (critical for GRPO group comparison)
         result = video_pipeline(
-            prompt=prompt,  # ← Same prompt for all!
+            prompt=prompt,  
             height=height,
             width=width,
             num_frames=num_frames,
             guidance_scale=current_guidance,  # ← Varies per candidate
             num_inference_steps=num_inference_steps,
             latents=latent_init,  # ← Varies per candidate
+            seed=base_seed,  # Fixed seed across candidates
             output_type="pt",
             is_video=True,
             vae_per_channel_normalize=True,
@@ -180,7 +187,7 @@ def video_rollout(
 def create_sampling_configurations(
     number_of_samples: int = 16,
     latent_range: tuple = (0.0, 1.0),
-    guidance_range: tuple = (5.0, 10.0),
+    guidance_range: tuple = (0.8, 1.2),
     device: str = "cuda",
 ) -> list:
     """
@@ -356,7 +363,7 @@ def grpo_search_with_physics_rewards(
         >>> print(f"Best reward: {result['best_episode'].reward:.3f}")
     """
     print(f"\n{'='*80}")
-    print(f"🎯 GRPO Search with Hand-Crafted Physics Rewards")
+    print("🎯 GRPO Search with Hand-Crafted Physics Rewards")
     print(f"{'='*80}")
     print(f"Prompt: '{prompt}'")
     print(f"Rounds: {num_rounds}, Candidates/round: {candidates_per_round}")
@@ -387,6 +394,8 @@ def grpo_search_with_physics_rewards(
                 num_candidates_per_prompt=candidates_per_round,
                 base_seed=base_seed + round_idx * 1000,
                 device=device,
+                latent_anchor_a=latent_a,
+                latent_anchor_b=latent_b,
             )
             print(f"✅ Generated {len(episodes)} episodes")
             
@@ -396,7 +405,7 @@ def grpo_search_with_physics_rewards(
                 episodes=episodes,
                 reward_type=reward_type,
             )
-            print(f"✅ Rewards computed")
+            print("✅ Rewards computed")
             
             # Add video quality rewards (temporal diversity + spatial complexity)
             for episode in episodes:
@@ -404,7 +413,8 @@ def grpo_search_with_physics_rewards(
                 spatial_score = video_spatial_complexity(episode.video)
                 
                 # Combine with existing reward
-                quality_bonus = 0.1 * (temporal_score + spatial_score) / 2
+                # Increase visual quality influence
+                quality_bonus = 0.2 * (temporal_score + spatial_score) / 2
                 episode.reward += quality_bonus
                 
                 # Store in reward info
@@ -446,11 +456,11 @@ def grpo_search_with_physics_rewards(
             
         except Exception as round_error:
             print(f"❌ Round {round_idx + 1} failed: {round_error}")
-            print(f"   Continuing to next round...")
+            print("   Continuing to next round...")
             continue
     
     print(f"\n{'='*80}")
-    print(f"🏆 GRPO Search Complete!")
+    print("🏆 GRPO Search Complete!")
     print(f"{'='*80}")
     print(f"Best overall reward: {best_overall.reward:.4f}")
     print(f"Total videos generated: {len(all_episodes)}")
@@ -497,12 +507,17 @@ def video_spatial_complexity(video_tensor: torch.Tensor) -> float:
     
     # Compute spatial gradients
     grad_x = torch.diff(video_tensor, dim=-1)  # Horizontal gradients
-    grad_y = torch.diff(video_tensor, dim=-2)  # Vertical gradients
-    
+    grad_y = torch.diff(video_tensor, dim=-2)  # Vertical gradients 
     # Spatial complexity
     complexity = (grad_x.var() + grad_y.var()).item()
+
+    # Add simple sharpness term (L1 gradient magnitude)
+    sharpness = (grad_x.abs().mean() + grad_y.abs().mean()).item()
+    # Normalize terms to [0,1] by conservative scaling
     normalized_complexity = min(complexity * 5, 1.0)
-    return normalized_complexity
+    normalized_sharpness = min(sharpness * 2, 1.0)
+    # Blend, emphasizing sharpness slightly
+    return 0.6 * normalized_complexity + 0.4 * normalized_sharpness
 
 def improve_temporal_smoothness(
     latent_anchor: torch.Tensor,
